@@ -1,0 +1,108 @@
+# CommitGuard
+
+AI-powered CLI that analyzes Git commits for bugs, security issues, and code quality problems. Uses [OpenRouter](https://openrouter.ai/) for access to GPT-4, Claude, Gemini, and 100+ other models.
+
+[GitHub](https://github.com/PierrunoYT/commitguard) · [PyPI](https://pypi.org/project/commitguard-cli/)
+
+## Features
+
+- **Analyze commits** – Detect bugs, security issues, and code quality problems
+- **Pre-commit check** – Review staged changes before committing
+- **Multi-model** – Use any model on OpenRouter (GPT-4, Claude, Gemini, etc.)
+- **Simple CLI** – One command, clear output
+
+## Requirements
+
+- Python 3.9+
+- [OpenRouter](https://openrouter.ai/) API key
+
+## Installation
+
+```bash
+pip install commitguard-cli
+```
+
+From source:
+
+```bash
+git clone https://github.com/PierrunoYT/commitguard.git
+cd commitguard
+pip install -e .
+```
+
+## Configuration
+
+Get an API key at [openrouter.ai/keys](https://openrouter.ai/keys):
+
+```bash
+# Linux / macOS
+export OPENROUTER_API_KEY=sk-or-...
+
+# Windows (PowerShell)
+$env:OPENROUTER_API_KEY = "sk-or-..."
+```
+
+Optional – default model (otherwise `openai/gpt-4o-mini`):
+
+```bash
+export OPENROUTER_MODEL=anthropic/claude-3.5-sonnet   # Linux/macOS
+$env:OPENROUTER_MODEL = "anthropic/claude-3.5-sonnet" # Windows
+```
+
+## Usage
+
+```bash
+# Analyze last commit
+commitguard analyze
+
+# Analyze specific commit
+commitguard analyze abc123
+
+# Analyze last 5 commits
+commitguard analyze -n 5
+
+# Analyze staged changes (before commit)
+commitguard check
+
+# Use a different model
+commitguard analyze --model anthropic/claude-3.5-sonnet
+commitguard analyze -m google/gemini-pro
+```
+
+### Options
+
+| Option | Description |
+|--------|-------------|
+| `-r, --repo PATH` | Path to Git repository (default: current dir) |
+| `--api-key KEY` | OpenRouter API key (or `OPENROUTER_API_KEY` env) |
+| `-m, --model MODEL` | Model to use (default: `openai/gpt-4o-mini` or `OPENROUTER_MODEL` env) |
+
+### Model examples
+
+| Model | Use case |
+|-------|----------|
+| `openai/gpt-4o-mini` | Fast, cheap (default) |
+| `openai/gpt-4o` | Higher quality |
+| `anthropic/claude-3.5-sonnet` | Strong code analysis |
+| `google/gemini-pro` | Alternative option |
+
+See [OpenRouter models](https://openrouter.ai/models) for the full list.
+
+## Troubleshooting
+
+| Error | Solution |
+|-------|----------|
+| Invalid or missing API key | Set `OPENROUTER_API_KEY` or use `--api-key`. Get a key at [openrouter.ai/keys](https://openrouter.ai/keys) |
+| Model not found | Use the full model ID (e.g. `openai/gpt-4o-mini`). Check [openrouter.ai/models](https://openrouter.ai/models) |
+| Rate limit exceeded | Wait and retry, or switch to a different model |
+| Service unavailable | OpenRouter may be down; try again later |
+
+**Security:** Never commit your API key. Use environment variables or `--api-key` at runtime.
+
+## License
+
+[MIT](LICENSE)
+
+## Changelog
+
+[CHANGELOG.md](CHANGELOG.md)
