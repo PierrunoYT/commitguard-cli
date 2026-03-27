@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-03-27
+
+### Added
+
+- **Structured output**:
+  - Added `--format` option with `text` (default) and `json` for both `analyze` and `check`
+  - Added structured JSON response envelope with `format_version`, per-result `summary`, and `findings`
+  - Added severity schema in JSON findings: `critical`, `warning`, `info`
+
+### Changed
+
+- **Exit code behavior**:
+  - Commands now return a non-zero exit code when issues are detected, enabling CI gate usage
+- **Model defaults**:
+  - Changed the default model from `openai/gpt-4o-mini` to `anthropic/claude-sonnet-4.6` for both `analyze` and `check`
+- **Documentation**:
+  - Updated README examples and option tables to reflect the new default model and model IDs
+  - Updated README with JSON usage examples, schema details, and exit-code behavior
+
 ## [0.1.3] - 2026-03-27
 
 ### Changed

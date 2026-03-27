@@ -10,6 +10,8 @@ AI-powered CLI that analyzes Git commits for bugs, security issues, and code qua
 - **Pre-commit check** – Review staged changes before committing
 - **Multi-model** – Use any model on OpenRouter (GPT-4, Claude, Gemini, etc.)
 - **Chronological batch analysis** – `analyze -n` processes commits oldest to newest
+- **Structured output** – `--format json` for machine-readable CI integrations
+- **CI-friendly exit codes** – exits non-zero when issues are detected
 - **Quiet base command** – Update checks run only when a subcommand is invoked
 - **Simple CLI** – One command, clear output
 
@@ -44,11 +46,11 @@ export OPENROUTER_API_KEY=sk-or-...
 $env:OPENROUTER_API_KEY = "sk-or-..."
 ```
 
-Optional – default model (otherwise `openai/gpt-4o-mini`):
+Optional - default model (otherwise `anthropic/claude-sonnet-4.6`):
 
 ```bash
-export OPENROUTER_MODEL=anthropic/claude-3.5-sonnet   # Linux/macOS
-$env:OPENROUTER_MODEL = "anthropic/claude-3.5-sonnet" # Windows
+export OPENROUTER_MODEL=anthropic/claude-sonnet-4.6   # Linux/macOS
+$env:OPENROUTER_MODEL = "anthropic/claude-sonnet-4.6" # Windows
 ```
 
 ## Usage
@@ -67,8 +69,12 @@ commitguard analyze -n 5
 commitguard check
 
 # Use a different model
-commitguard analyze --model anthropic/claude-3.5-sonnet
+commitguard analyze --model anthropic/claude-sonnet-4.6
 commitguard analyze -m google/gemini-pro
+
+# JSON output for automation
+commitguard analyze --format json
+commitguard check --format json
 ```
 
 When using `analyze -n`, commits are analyzed in chronological order (oldest to newest).
@@ -79,15 +85,46 @@ When using `analyze -n`, commits are analyzed in chronological order (oldest to 
 |--------|-------------|
 | `-r, --repo PATH` | Path to Git repository (default: current dir) |
 | `--api-key KEY` | OpenRouter API key (or `OPENROUTER_API_KEY` env) |
-| `-m, --model MODEL` | Model to use (default: `openai/gpt-4o-mini` or `OPENROUTER_MODEL` env) |
+| `-m, --model MODEL` | Model to use (default: `anthropic/claude-sonnet-4.6` or `OPENROUTER_MODEL` env) |
+| `--format [text|json]` | Output format (default: `text`) |
+
+### JSON output schema
+
+`--format json` returns:
+
+```json
+{
+  "format_version": "1",
+  "results": [
+    {
+      "commit": "HEAD",
+      "summary": "string",
+      "findings": [
+        {
+          "severity": "critical | warning | info",
+          "title": "string",
+          "description": "string",
+          "file": "path/or/null"
+        }
+      ]
+    }
+  ]
+}
+```
+
+### Exit codes
+
+- Returns non-zero when analysis finds issues.
+- Returns non-zero on command/runtime errors.
+- Returns zero only when no issues are detected.
 
 ### Model examples
 
 | Model | Use case |
 |-------|----------|
-| `openai/gpt-4o-mini` | Fast, cheap (default) |
+| `anthropic/claude-sonnet-4.6` | Strong code analysis (default) |
 | `openai/gpt-4o` | Higher quality |
-| `anthropic/claude-3.5-sonnet` | Strong code analysis |
+| `openai/gpt-4o-mini` | Fast, cheaper option |
 | `google/gemini-pro` | Alternative option |
 
 See [OpenRouter models](https://openrouter.ai/models) for the full list.
@@ -97,7 +134,7 @@ See [OpenRouter models](https://openrouter.ai/models) for the full list.
 | Error | Solution |
 |-------|----------|
 | Invalid or missing API key | Set `OPENROUTER_API_KEY` or use `--api-key`. Get a key at [openrouter.ai/keys](https://openrouter.ai/keys) |
-| Model not found | Use the full model ID (e.g. `openai/gpt-4o-mini`). Check [openrouter.ai/models](https://openrouter.ai/models) |
+| Model not found | Use the full model ID (e.g. `anthropic/claude-sonnet-4.6`). Check [openrouter.ai/models](https://openrouter.ai/models) |
 | Rate limit exceeded | Wait and retry, or switch to a different model |
 | Request timed out | Retry the command, or use a faster/smaller model |
 | Service unavailable | OpenRouter may be down; try again later |
