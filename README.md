@@ -9,6 +9,8 @@ AI-powered CLI that analyzes Git commits for bugs, security issues, and code qua
 - **Analyze commits** – Detect bugs, security issues, and code quality problems
 - **Pre-commit check** – Review staged changes before committing
 - **Multi-model** – Use any model on OpenRouter (GPT-4, Claude, Gemini, etc.)
+- **Chronological batch analysis** – `analyze -n` processes commits oldest to newest
+- **Quiet base command** – Update checks run only when a subcommand is invoked
 - **Simple CLI** – One command, clear output
 
 ## Requirements
@@ -68,6 +70,8 @@ commitguard check
 commitguard analyze --model anthropic/claude-3.5-sonnet
 commitguard analyze -m google/gemini-pro
 ```
+
+When using `analyze -n`, commits are analyzed in chronological order (oldest to newest).
 
 ### Options
 

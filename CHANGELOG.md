@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-03-27
+
+### Changed
+
+- **Analyzer robustness**:
+  - Reuse OpenAI client instances per API key to avoid recreating clients on each analysis call
+  - Handle root commits more reliably when building diffs and changed file lists
+  - Detect and surface when large diffs are truncated to the maximum analysis context
+- **CLI behavior**:
+  - Skip update checks when running bare `commitguard` without a subcommand
+  - Analyze multi-commit ranges in chronological order when using `analyze -n/--count`
+
 ## [0.1.1] - 2025-03-21
 
 ### Added

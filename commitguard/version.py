@@ -1,5 +1,7 @@
 """Version checking utilities."""
 
+from __future__ import annotations
+
 import json
 import urllib.request
 from urllib.error import URLError

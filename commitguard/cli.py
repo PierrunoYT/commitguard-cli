@@ -1,5 +1,7 @@
 """CLI for CommitGuard."""
 
+from __future__ import annotations
+
 import os
 from pathlib import Path
 
@@ -18,11 +20,14 @@ def get_repo_path(path: str | None) -> Path:
     return repo_path
 
 
-@click.group()
+@click.group(invoke_without_command=True)
 @click.version_option(version=__version__, prog_name="CommitGuard")
-def main() -> None:
+@click.pass_context
+def main(ctx: click.Context) -> None:
     """AI-powered tool to analyze Git commits for bugs and issues."""
-    # Check for updates (silently ignore errors)
+    # Only check for updates when a subcommand is invoked
+    if ctx.invoked_subcommand is None:
+        return
     try:
         latest = check_for_update()
         if latest:
@@ -82,7 +87,7 @@ def analyze(
     if count < 1:
         raise click.ClickException("--count must be at least 1.")
 
-    refs = [commit] if count == 1 else [f"{commit}~{i}" for i in range(count)]
+    refs = [commit] if count == 1 else [f"{commit}~{i}" for i in range(count - 1, -1, -1)]
     had_errors = False
     for ref in refs:
         try:
