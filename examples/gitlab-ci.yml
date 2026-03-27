@@ -1,0 +1,14 @@
+# Example GitLab CI job: analyze the latest commit after clone.
+# Set OPENROUTER_API_KEY in CI/CD variables (masked, protected as appropriate).
+
+commitguard:
+  image: python:3.12-slim
+  variables:
+    GIT_DEPTH: "2"
+  before_script:
+    - pip install commitguard-cli
+  script:
+    - commitguard analyze HEAD --format json
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH

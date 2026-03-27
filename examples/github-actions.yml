@@ -1,0 +1,32 @@
+# Example: run CommitGuard on the latest commit in CI (after `actions/checkout`).
+# Add OPENROUTER_API_KEY as a repository secret in GitHub: Settings → Secrets and variables → Actions.
+#
+# Copy to `.github/workflows/commitguard.yml` and adjust branches / triggers as needed.
+
+name: CommitGuard
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install CommitGuard
+        run: pip install commitguard-cli
+
+      - name: Analyze HEAD commit
+        env:
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+        run: commitguard analyze HEAD --format json

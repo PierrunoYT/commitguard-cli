@@ -4,8 +4,7 @@ from __future__ import annotations
 
 import json
 import os
-from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 from click.testing import CliRunner
@@ -380,6 +379,55 @@ def test_check_error(mock_as, mock_update, runner, fake_repo):
     )
     assert result.exit_code != 0
     assert "kaboom" in result.output
+
+
+# ---------------------------------------------------------------------------
+# Config file defaults
+# ---------------------------------------------------------------------------
+
+
+@patch("commitguard.cli.check_for_update", return_value=None)
+@patch(
+    "commitguard.cli.analyze_commit_json",
+    return_value={"summary": "ok", "findings": []},
+)
+def test_analyze_config_default_format_json(
+    mock_acj, mock_update, runner, tmp_path, monkeypatch
+):
+    monkeypatch.chdir(tmp_path)
+    repo = tmp_path / "repo"
+    (repo / ".git").mkdir(parents=True)
+    (tmp_path / ".commitguardrc").write_text('format = "json"\n', encoding="utf-8")
+    env = {**os.environ, "OPENROUTER_API_KEY": "test-key"}
+    result = runner.invoke(
+        main,
+        ["analyze", "HEAD", "--repo", str(repo)],
+        env=env,
+    )
+    assert result.exit_code == 0
+    assert mock_acj.called
+
+
+@patch("commitguard.cli.check_for_update", return_value=None)
+@patch(
+    "commitguard.cli.analyze_commit",
+    return_value="No issues detected.",
+)
+def test_analyze_cli_overrides_config_format(
+    mock_ac, mock_update, runner, tmp_path, monkeypatch
+):
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".commitguardrc").write_text('format = "json"\n', encoding="utf-8")
+    repo = tmp_path / "repo"
+    (repo / ".git").mkdir(parents=True)
+    env = {**os.environ, "OPENROUTER_API_KEY": "test-key"}
+    result = runner.invoke(
+        main,
+        ["analyze", "HEAD", "--repo", str(repo), "--format", "text"],
+        env=env,
+    )
+    assert result.exit_code == 0
+    assert mock_ac.called
 
 
 # ---------------------------------------------------------------------------

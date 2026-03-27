@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 
 import click
+from click.core import ParameterSource
 
 from .analyzer import (
     analyze_commit,
@@ -16,6 +17,11 @@ from .analyzer import (
     has_issues_in_text,
 )
 from . import __version__
+from .config import (
+    load_resolved_config,
+    normalize_choice,
+    resolve_repo_from_config,
+)
 from .version import check_for_update
 
 SEVERITY_ORDER = {"info": 0, "warning": 1, "critical": 2}
@@ -41,6 +47,50 @@ def get_repo_path(path: str | None) -> Path:
     return repo_path
 
 
+def apply_user_config(
+    ctx: click.Context,
+    cfg: dict,
+    base_dir: Path | None,
+    *,
+    model: str,
+    repo_path: Path,
+    output_format: str,
+    severity: str,
+    fail_on: str,
+) -> tuple[str, Path, str, str, str]:
+    """Apply discovered config when the user left options at CLI defaults."""
+    src = ctx.get_parameter_source
+
+    def is_default(name: str) -> bool:
+        return src(name) == ParameterSource.DEFAULT
+
+    try:
+        if is_default("model") and cfg.get("model"):
+            model = str(cfg["model"])
+        if is_default("repo_path") and cfg.get("repo"):
+            repo_path = resolve_repo_from_config(str(cfg["repo"]), base_dir)
+        if is_default("output_format") and cfg.get("format") is not None:
+            output_format = normalize_choice(
+                cfg["format"], frozenset({"text", "json"}), "format"
+            )
+        if is_default("severity") and cfg.get("severity") is not None:
+            severity = normalize_choice(
+                cfg["severity"],
+                frozenset({"info", "warning", "critical"}),
+                "severity",
+            )
+        if is_default("fail_on") and cfg.get("fail_on") is not None:
+            fail_on = normalize_choice(
+                cfg["fail_on"],
+                frozenset({"info", "warning", "critical"}),
+                "fail_on",
+            )
+    except ValueError as e:
+        raise click.ClickException(str(e)) from e
+
+    return model, repo_path, output_format, severity, fail_on
+
+
 @click.group(invoke_without_command=True)
 @click.version_option(version=__version__, prog_name="CommitGuard")
 @click.pass_context
@@ -63,6 +113,7 @@ def main(ctx: click.Context) -> None:
 
 
 @main.command()
+@click.pass_context
 @click.argument("commit", default="HEAD", required=False)
 @click.option(
     "-r",
@@ -83,6 +134,13 @@ def main(ctx: click.Context) -> None:
     "--api-key",
     envvar="OPENROUTER_API_KEY",
     help="OpenRouter API key (or set OPENROUTER_API_KEY).",
+)
+@click.option(
+    "--config",
+    "config_file",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    default=None,
+    help="TOML config file (otherwise: .commitguardrc, pyproject [tool.commitguard], or COMMITGUARD_CONFIG).",
 )
 @click.option(
     "--model",
@@ -122,10 +180,12 @@ def main(ctx: click.Context) -> None:
     help="Save output to a file (in addition to stdout).",
 )
 def analyze(
+    ctx: click.Context,
     commit: str,
     repo_path: Path,
     count: int,
     api_key: str | None,
+    config_file: Path | None,
     model: str,
     output_format: str,
     severity: str,
@@ -133,6 +193,17 @@ def analyze(
     output_file: Path | None,
 ) -> None:
     """Analyze one or more commits for bugs and issues."""
+    cfg, base_dir = load_resolved_config(config_file)
+    model, repo_path, output_format, severity, fail_on = apply_user_config(
+        ctx,
+        cfg,
+        base_dir,
+        model=model,
+        repo_path=repo_path,
+        output_format=output_format,
+        severity=severity,
+        fail_on=fail_on,
+    )
     repo = get_repo_path(str(repo_path))
     key = api_key or os.environ.get("OPENROUTER_API_KEY")
     if not key:
@@ -200,6 +271,7 @@ def analyze(
 
 
 @main.command()
+@click.pass_context
 @click.option(
     "-r",
     "--repo",
@@ -212,6 +284,13 @@ def analyze(
     "--api-key",
     envvar="OPENROUTER_API_KEY",
     help="OpenRouter API key (or set OPENROUTER_API_KEY).",
+)
+@click.option(
+    "--config",
+    "config_file",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    default=None,
+    help="TOML config file (otherwise: .commitguardrc, pyproject [tool.commitguard], or COMMITGUARD_CONFIG).",
 )
 @click.option(
     "--model",
@@ -251,8 +330,10 @@ def analyze(
     help="Save output to a file (in addition to stdout).",
 )
 def check(
+    ctx: click.Context,
     repo_path: Path,
     api_key: str | None,
+    config_file: Path | None,
     model: str,
     output_format: str,
     severity: str,
@@ -260,6 +341,17 @@ def check(
     output_file: Path | None,
 ) -> None:
     """Analyze staged changes (before commit)."""
+    cfg, base_dir = load_resolved_config(config_file)
+    model, repo_path, output_format, severity, fail_on = apply_user_config(
+        ctx,
+        cfg,
+        base_dir,
+        model=model,
+        repo_path=repo_path,
+        output_format=output_format,
+        severity=severity,
+        fail_on=fail_on,
+    )
     repo = get_repo_path(str(repo_path))
     key = api_key or os.environ.get("OPENROUTER_API_KEY")
     if not key:

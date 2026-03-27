@@ -20,9 +20,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Added `--fail-on` flag to control which minimum severity triggers a non-zero exit code (default: `warning`)
 - **Output to file**:
   - Added `-o` / `--output` flag to save analysis results to a file (in addition to stdout)
+- **Configuration files**:
+  - Support `.commitguardrc` (TOML) and `[tool.commitguard]` in `pyproject.toml` for default `model`, `repo`, `format`, `severity`, and `fail-on`
+  - Discovery walks upward from the working directory; optional `COMMITGUARD_CONFIG` env or `--config PATH` selects a file explicitly
+  - CLI flags and environment variables override config when set (non-default)
+- **CI/CD examples**:
+  - Added `examples/github-actions.yml`, `examples/gitlab-ci.yml`, and `examples/pre-commit-config.yaml` with README documentation
 - **Testing**:
-  - Added 52 unit tests covering `analyzer.py` and `cli.py`
-  - Tests cover edge cases (root commits, truncated diffs, empty diffs), error handling (rate limits, timeouts, API errors), and all CLI flags
+  - Added unit tests for `analyzer.py`, `cli.py`, and `config.py`
+  - Tests cover edge cases (root commits, truncated diffs, empty diffs), error handling (rate limits, timeouts, API errors), config discovery, and CLI flags
   - Added `pytest` configuration in `pyproject.toml`
 
 ### Changed
@@ -33,7 +39,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Changed the default model from `openai/gpt-4o-mini` to `anthropic/claude-sonnet-4.6` for both `analyze` and `check`
 - **Documentation**:
   - Updated README examples and option tables to reflect the new default model and model IDs
-  - Updated README with JSON usage examples, schema details, and exit-code behavior
+  - Updated README with JSON usage examples, schema details, exit-code behavior, config file format, and CI/pre-commit integration
   - Added severity filtering and output-to-file documentation to README
 
 ### Fixed
@@ -43,6 +49,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Internal
 
 - Added `ruff` linter configuration to `pyproject.toml`
+- Added `tomli` dependency for Python versions older than 3.11 (stdlib `tomllib` on 3.11+)
 
 ## [0.1.3] - 2026-03-27
 

@@ -1,0 +1,15 @@
+# Example fragment for .pre-commit-config.yaml — run CommitGuard on staged changes before commit.
+# Install: pip install pre-commit && pre-commit install
+#
+# Add this under `repos:` (and set OPENROUTER_API_KEY in your environment when committing).
+
+repos:
+  - repo: local
+    hooks:
+      - id: commitguard-check
+        name: CommitGuard (staged changes)
+        entry: commitguard
+        args: [check]
+        language: system
+        pass_filenames: false
+        stages: [pre-commit]
