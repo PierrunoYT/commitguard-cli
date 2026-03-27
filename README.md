@@ -15,6 +15,10 @@ AI-powered CLI that analyzes Git commits for bugs, security issues, and code qua
 - **CI-friendly exit codes** – exits non-zero when issues are detected
 - **Output to file** – `--output` to save results to a file
 - **Config files** – `.commitguardrc` or `[tool.commitguard]` in `pyproject.toml` for defaults
+- **Focus & prompts** – `--focus` to steer reviews; `--prompt-file` or config for a custom system prompt
+- **Commit ranges** – `analyze --from main --to feature` (Git `from..to` range, chronological)
+- **Local cache** – `.commitguard_cache/` avoids repeat API calls for the same commit and settings (`--no-cache` to skip)
+- **Python API** – Import `commitguard` and call analyzer functions from code (see [Library usage](#library-usage))
 - **Quiet base command** – Update checks run only when a subcommand is invoked
 - **Simple CLI** – One command, clear output
 
@@ -58,7 +62,7 @@ $env:OPENROUTER_MODEL = "anthropic/claude-sonnet-4.6" # Windows
 
 ### Config files
 
-Defaults for `model`, `repo`, `format`, `severity`, and `fail-on` can be set in TOML (CLI flags and environment variables still override when you pass them explicitly).
+Defaults for `model`, `repo`, `format`, `severity`, `fail-on`, `focus`, `prompt_file`, and `no_cache` can be set in TOML (CLI flags and environment variables still override when you pass them explicitly).
 
 **Resolution order**
 
@@ -75,6 +79,9 @@ repo = "."
 format = "json"
 severity = "warning"
 fail_on = "critical"
+focus = "security"
+prompt_file = "prompts/review.txt"
+no_cache = false
 ```
 
 Paths in `repo` are resolved relative to the directory that contains the config file.
@@ -117,15 +124,32 @@ commitguard analyze --format json --fail-on critical
 # Save output to a file
 commitguard analyze --output report.txt
 commitguard analyze --format json -o results.json
+
+# Steer the review (analyze or check)
+commitguard analyze --focus security
+commitguard check --focus performance
+
+# Custom system prompt (UTF-8 text file)
+commitguard analyze --prompt-file ./my-system-prompt.txt
+
+# Analyze commits on a branch not in main (Git range main..feature)
+commitguard analyze --from main --to feature
+
+# Skip reading/writing .commitguard_cache in the repo
+commitguard analyze --no-cache HEAD
 ```
 
-When using `analyze -n`, commits are analyzed in chronological order (oldest to newest).
+When using `analyze -n`, commits are analyzed in chronological order (oldest to newest). Do not combine `-n`/`COMMIT` with `--from`/`--to`.
 
-### Options
+### Options (`analyze`)
 
 | Option | Description |
 |--------|-------------|
+| `COMMIT` | Starting commit (default `HEAD`). Ignored when using `--from`/`--to`. |
 | `-r, --repo PATH` | Path to Git repository (default: current dir) |
+| `-n, --count N` | Analyze N commits walking back from `COMMIT` (not used with `--from`/`--to`) |
+| `--from REF` | Range start (use with `--to`; Git range `from..to`) |
+| `--to REF` | Range end (use with `--from`) |
 | `--api-key KEY` | OpenRouter API key (or `OPENROUTER_API_KEY` env) |
 | `--config PATH` | Explicit TOML config file (see [Config files](#config-files)) |
 | `-m, --model MODEL` | Model to use (default: `anthropic/claude-sonnet-4.6` or `OPENROUTER_MODEL` env) |
@@ -133,6 +157,17 @@ When using `analyze -n`, commits are analyzed in chronological order (oldest to 
 | `--severity [info|warning|critical]` | Minimum severity to include in JSON output (default: `info`) |
 | `--fail-on [info|warning|critical]` | Minimum severity that triggers a non-zero exit code, JSON only (default: `warning`) |
 | `-o, --output FILE` | Save output to a file (in addition to stdout) |
+| `--focus FOCUS` | `general`, `security`, `performance`, `bugs`, or `quality` |
+| `--prompt-file PATH` | Replace the built-in system prompt with this UTF-8 file |
+| `--no-cache` | Do not use `.commitguard_cache/` |
+
+### Options (`check`)
+
+Same as `analyze` except there is no `COMMIT`, `-n`, `--from`, or `--to`.
+
+### Cache
+
+Successful analyses are stored under **`.commitguard_cache/`** in the Git repository (text and JSON cached separately). Staged runs are keyed by a hash of the staged diff. Delete that folder or pass **`--no-cache`** to force a fresh API call. Add `.commitguard_cache/` to `.gitignore` if you use the tool inside a project (the published CLI’s own repo already ignores it).
 
 ### JSON output schema
 
@@ -175,6 +210,44 @@ When using `analyze -n`, commits are analyzed in chronological order (oldest to 
 
 See [OpenRouter models](https://openrouter.ai/models) for the full list.
 
+## Library usage
+
+Install the package, then import the same functions the CLI uses:
+
+```python
+from commitguard import (
+    analyze_commit,
+    analyze_commit_json,
+    analyze_staged,
+    analyze_staged_json,
+    build_effective_system_prompt,
+    list_commit_shas_in_range,
+    load_prompt_file,
+)
+
+# Markdown review of HEAD
+text = analyze_commit(
+    "/path/to/repo",
+    "HEAD",
+    api_key="sk-or-...",
+    focus="security",
+    use_cache=True,
+)
+
+# Structured JSON for one commit
+data = analyze_commit_json(
+    "/path/to/repo",
+    "abc123",
+    api_key="sk-or-...",
+    model="anthropic/claude-sonnet-4.6",
+)
+
+# Commits in Git range main..feature (oldest first)
+shas = list_commit_shas_in_range("/path/to/repo", "main", "feature")
+```
+
+`AnalysisError` is raised for invalid API responses, configuration, or Git errors. See docstrings on these functions for parameters.
+
 ## CI and pre-commit
 
 Example files live under [`examples/`](examples/):
@@ -202,6 +275,10 @@ In CI, `commitguard analyze HEAD` fits push and pull-request pipelines. For a ga
 ## License
 
 [MIT](LICENSE)
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup and pull request expectations.
 
 ## Changelog
 

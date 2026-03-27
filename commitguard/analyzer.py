@@ -3,13 +3,23 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
+
 from git import Repo
 from openai import OpenAI, APIError, RateLimitError, APITimeoutError
+
+from .cache import (
+    make_cache_key,
+    read_cached_json,
+    read_cached_text,
+    staged_diff_fingerprint,
+    write_cached_json,
+    write_cached_text,
+)
 from .errors import AnalysisError
 
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 MAX_DIFF_CHARS = 12000
-
 
 SYSTEM_PROMPT = """You are a code review assistant. Analyze Git commits for:
 1. Potential bugs and logic errors
@@ -21,8 +31,77 @@ SYSTEM_PROMPT = """You are a code review assistant. Analyze Git commits for:
 Respond in markdown. Be concise. If nothing concerning is found, say "No issues detected."
 """
 
+# Extra instructions appended when using ``--focus`` (or config ``focus``).
+FOCUS_EXTRA: dict[str, str] = {
+    "general": "",
+    "security": (
+        "\n\nFocus this review on security: injection, auth/authz, secrets, "
+        "cryptography, and unsafe deserialization."
+    ),
+    "performance": (
+        "\n\nFocus this review on performance: algorithmic complexity, I/O, "
+        "memory use, and hot paths."
+    ),
+    "bugs": (
+        "\n\nFocus this review on correctness: logic bugs, edge cases, "
+        "race conditions, and error handling gaps."
+    ),
+    "quality": (
+        "\n\nFocus this review on maintainability: readability, structure, "
+        "tests, and technical debt."
+    ),
+}
+
 _client_cache: dict[str, OpenAI] = {}
 SEVERITY_LEVELS = {"critical", "warning", "info"}
+
+
+def build_effective_system_prompt(
+    focus: str = "general",
+    system_prompt_override: str | None = None,
+) -> str:
+    """
+    Combine the default or custom system prompt with *focus* scoping.
+
+    If *system_prompt_override* is set (e.g. from ``--prompt-file``), it replaces
+    the built-in system prompt; focus instructions are still appended when not ``general``.
+    """
+    focus_key = focus if focus in FOCUS_EXTRA else "general"
+    base = (
+        system_prompt_override.strip()
+        if system_prompt_override
+        else SYSTEM_PROMPT
+    )
+    return base + FOCUS_EXTRA[focus_key]
+
+
+def load_prompt_file(path: str | Path) -> str:
+    """Read UTF-8 text from *path* for use as ``system_prompt_override``."""
+    p = Path(path)
+    if not p.is_file():
+        raise AnalysisError(f"Prompt file not found: {p}")
+    try:
+        return p.read_text(encoding="utf-8")
+    except OSError as e:
+        raise AnalysisError(f"Could not read prompt file ({p}): {e}") from e
+
+
+def list_commit_shas_in_range(repo_path: str, from_ref: str, to_ref: str) -> list[str]:
+    """
+    Return commit SHAs in ``from_ref..to_ref`` (Git range), oldest first.
+
+    This matches ``git rev-list --reverse from_ref..to_ref``: commits reachable
+    from *to_ref* but not from *from_ref* (branch comparison / feature range).
+    """
+    repo = Repo(repo_path)
+    spec = f"{from_ref}..{to_ref}"
+    try:
+        commits = list(repo.iter_commits(spec, reverse=True))
+    except Exception as e:
+        raise AnalysisError(
+            f"Invalid commit range {spec!r}: {e}"
+        ) from e
+    return [c.hexsha for c in commits]
 
 
 def _get_client(api_key: str) -> OpenAI:
@@ -52,9 +131,12 @@ def _call_ai(
     api_key: str,
     model: str,
     truncated: bool = False,
+    *,
+    system_prompt: str | None = None,
 ) -> str:
     """Call OpenRouter API for analysis (supports multiple models)."""
     client = _get_client(api_key)
+    sp = system_prompt if system_prompt is not None else SYSTEM_PROMPT
     truncation_note = (
         "\n\n*Note: The diff was truncated due to size.*" if truncated else ""
     )
@@ -72,7 +154,7 @@ def _call_ai(
         response = client.chat.completions.create(
             model=model,
             messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "system", "content": sp},
                 {"role": "user", "content": user_content},
             ],
         )
@@ -94,9 +176,12 @@ def _call_ai_json(
     api_key: str,
     model: str,
     truncated: bool = False,
+    *,
+    system_prompt: str | None = None,
 ) -> dict:
     """Call OpenRouter API and request strict JSON output."""
     client = _get_client(api_key)
+    sp = system_prompt if system_prompt is not None else SYSTEM_PROMPT
     truncation_note = (
         "\n\nThe diff was truncated due to size." if truncated else ""
     )
@@ -128,7 +213,7 @@ Diff:
         response = client.chat.completions.create(
             model=model,
             messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "system", "content": sp},
                 {"role": "user", "content": user_content},
             ],
             response_format={"type": "json_object"},
@@ -177,18 +262,8 @@ def has_issues_in_text(result: str) -> bool:
     return "no issues detected" not in result.lower()
 
 
-def analyze_commit(
-    repo_path: str,
-    ref: str = "HEAD",
-    *,
-    api_key: str,
-    model: str = "anthropic/claude-sonnet-4.6",
-) -> str:
-    """Analyze a specific commit."""
-    repo = Repo(repo_path)
-    commit = repo.commit(ref)
-    diff, truncated = _get_diff(repo, commit)
-    files = []
+def _collect_commit_files(commit) -> list[str]:
+    files: list[str] = []
     if commit.parents:
         for diff_item in commit.diff(commit.parents[0], create_patch=False):
             path = diff_item.b_path or diff_item.a_path
@@ -199,12 +274,62 @@ def analyze_commit(
             path = diff_item.b_path or diff_item.a_path
             if path:
                 files.append(path)
-    message = (
-        commit.message.decode("utf-8")
-        if isinstance(commit.message, bytes)
-        else commit.message
+    return files
+
+
+def _commit_message(commit) -> str:
+    msg = commit.message
+    return msg.decode("utf-8") if isinstance(msg, bytes) else msg
+
+
+def analyze_commit(
+    repo_path: str,
+    ref: str = "HEAD",
+    *,
+    api_key: str,
+    model: str = "anthropic/claude-sonnet-4.6",
+    focus: str = "general",
+    system_prompt_override: str | None = None,
+    use_cache: bool = True,
+) -> str:
+    """
+    Analyze a single commit and return markdown.
+
+    Results may be read from ``.commitguard_cache/`` when *use_cache* is true.
+    """
+    effective = build_effective_system_prompt(focus, system_prompt_override)
+    repo = Repo(repo_path)
+    commit = repo.commit(ref)
+    diff, truncated = _get_diff(repo, commit)
+    files = _collect_commit_files(commit)
+    message = _commit_message(commit)
+
+    if use_cache:
+        key = make_cache_key(
+            kind="text",
+            model=model,
+            focus=focus,
+            system_prompt=effective,
+            commit_hex=commit.hexsha,
+        )
+        hit = read_cached_text(repo_path, key)
+        if hit is not None:
+            return hit
+
+    out = _call_ai(
+        diff, message, files, api_key, model, truncated, system_prompt=effective
     )
-    return _call_ai(diff, message, files, api_key, model, truncated)
+
+    if use_cache:
+        key = make_cache_key(
+            kind="text",
+            model=model,
+            focus=focus,
+            system_prompt=effective,
+            commit_hex=commit.hexsha,
+        )
+        write_cached_text(repo_path, key, out)
+    return out
 
 
 def analyze_commit_json(
@@ -213,28 +338,48 @@ def analyze_commit_json(
     *,
     api_key: str,
     model: str = "anthropic/claude-sonnet-4.6",
+    focus: str = "general",
+    system_prompt_override: str | None = None,
+    use_cache: bool = True,
 ) -> dict:
-    """Analyze a specific commit and return structured JSON."""
+    """
+    Analyze a single commit and return structured JSON (summary + findings).
+
+    Cached separately from markdown output under ``.commitguard_cache/``.
+    """
+    effective = build_effective_system_prompt(focus, system_prompt_override)
     repo = Repo(repo_path)
     commit = repo.commit(ref)
     diff, truncated = _get_diff(repo, commit)
-    files = []
-    if commit.parents:
-        for diff_item in commit.diff(commit.parents[0], create_patch=False):
-            path = diff_item.b_path or diff_item.a_path
-            if path:
-                files.append(path)
-    else:
-        for diff_item in commit.diff(None, create_patch=False):
-            path = diff_item.b_path or diff_item.a_path
-            if path:
-                files.append(path)
-    message = (
-        commit.message.decode("utf-8")
-        if isinstance(commit.message, bytes)
-        else commit.message
+    files = _collect_commit_files(commit)
+    message = _commit_message(commit)
+
+    if use_cache:
+        key = make_cache_key(
+            kind="json",
+            model=model,
+            focus=focus,
+            system_prompt=effective,
+            commit_hex=commit.hexsha,
+        )
+        hit = read_cached_json(repo_path, key)
+        if hit is not None:
+            return hit
+
+    out = _call_ai_json(
+        diff, message, files, api_key, model, truncated, system_prompt=effective
     )
-    return _call_ai_json(diff, message, files, api_key, model, truncated)
+
+    if use_cache:
+        key = make_cache_key(
+            kind="json",
+            model=model,
+            focus=focus,
+            system_prompt=effective,
+            commit_hex=commit.hexsha,
+        )
+        write_cached_json(repo_path, key, out)
+    return out
 
 
 def analyze_staged(
@@ -242,16 +387,53 @@ def analyze_staged(
     *,
     api_key: str,
     model: str = "anthropic/claude-sonnet-4.6",
+    focus: str = "general",
+    system_prompt_override: str | None = None,
+    use_cache: bool = True,
 ) -> str:
-    """Analyze staged changes."""
+    """Analyze staged changes (index) and return markdown."""
+    effective = build_effective_system_prompt(focus, system_prompt_override)
     repo = Repo(repo_path)
     diff = repo.git.diff("--cached")
     if not diff.strip():
         return "No staged changes to analyze."
     truncated = len(diff) > MAX_DIFF_CHARS
-    diff = diff[:MAX_DIFF_CHARS]
+    diff_slice = diff[:MAX_DIFF_CHARS]
     files = repo.git.diff("--cached", "--name-only").splitlines()
-    return _call_ai(diff, "(staged changes)", files, api_key, model, truncated)
+    fp = staged_diff_fingerprint(diff)
+
+    if use_cache:
+        key = make_cache_key(
+            kind="text",
+            model=model,
+            focus=focus,
+            system_prompt=effective,
+            staged_fingerprint=fp,
+        )
+        hit = read_cached_text(repo_path, key)
+        if hit is not None:
+            return hit
+
+    out = _call_ai(
+        diff_slice,
+        "(staged changes)",
+        files,
+        api_key,
+        model,
+        truncated,
+        system_prompt=effective,
+    )
+
+    if use_cache:
+        key = make_cache_key(
+            kind="text",
+            model=model,
+            focus=focus,
+            system_prompt=effective,
+            staged_fingerprint=fp,
+        )
+        write_cached_text(repo_path, key, out)
+    return out
 
 
 def analyze_staged_json(
@@ -259,13 +441,50 @@ def analyze_staged_json(
     *,
     api_key: str,
     model: str = "anthropic/claude-sonnet-4.6",
+    focus: str = "general",
+    system_prompt_override: str | None = None,
+    use_cache: bool = True,
 ) -> dict:
     """Analyze staged changes and return structured JSON."""
+    effective = build_effective_system_prompt(focus, system_prompt_override)
     repo = Repo(repo_path)
     diff = repo.git.diff("--cached")
     if not diff.strip():
         return {"summary": "No staged changes to analyze.", "findings": []}
     truncated = len(diff) > MAX_DIFF_CHARS
-    diff = diff[:MAX_DIFF_CHARS]
+    diff_slice = diff[:MAX_DIFF_CHARS]
     files = repo.git.diff("--cached", "--name-only").splitlines()
-    return _call_ai_json(diff, "(staged changes)", files, api_key, model, truncated)
+    fp = staged_diff_fingerprint(diff)
+
+    if use_cache:
+        key = make_cache_key(
+            kind="json",
+            model=model,
+            focus=focus,
+            system_prompt=effective,
+            staged_fingerprint=fp,
+        )
+        hit = read_cached_json(repo_path, key)
+        if hit is not None:
+            return hit
+
+    out = _call_ai_json(
+        diff_slice,
+        "(staged changes)",
+        files,
+        api_key,
+        model,
+        truncated,
+        system_prompt=effective,
+    )
+
+    if use_cache:
+        key = make_cache_key(
+            kind="json",
+            model=model,
+            focus=focus,
+            system_prompt=effective,
+            staged_fingerprint=fp,
+        )
+        write_cached_json(repo_path, key, out)
+    return out

@@ -15,16 +15,21 @@ from .analyzer import (
     analyze_staged,
     analyze_staged_json,
     has_issues_in_text,
+    list_commit_shas_in_range,
+    load_prompt_file,
 )
 from . import __version__
 from .config import (
     load_resolved_config,
     normalize_choice,
+    resolve_path_from_config,
     resolve_repo_from_config,
 )
+from .errors import AnalysisError
 from .version import check_for_update
 
 SEVERITY_ORDER = {"info": 0, "warning": 1, "critical": 2}
+FOCUS_SET = frozenset({"general", "security", "performance", "bugs", "quality"})
 
 
 def filter_findings_by_severity(
@@ -57,7 +62,10 @@ def apply_user_config(
     output_format: str,
     severity: str,
     fail_on: str,
-) -> tuple[str, Path, str, str, str]:
+    focus: str,
+    prompt_file: Path | None,
+    no_cache: bool,
+) -> tuple[str, Path, str, str, str, str, Path | None, bool]:
     """Apply discovered config when the user left options at CLI defaults."""
     src = ctx.get_parameter_source
 
@@ -85,10 +93,16 @@ def apply_user_config(
                 frozenset({"info", "warning", "critical"}),
                 "fail_on",
             )
+        if is_default("focus") and cfg.get("focus") is not None:
+            focus = normalize_choice(cfg["focus"], FOCUS_SET, "focus")
+        if is_default("prompt_file") and cfg.get("prompt_file"):
+            prompt_file = resolve_path_from_config(str(cfg["prompt_file"]), base_dir)
+        if is_default("no_cache") and cfg.get("no_cache") is True:
+            no_cache = True
     except ValueError as e:
         raise click.ClickException(str(e)) from e
 
-    return model, repo_path, output_format, severity, fail_on
+    return model, repo_path, output_format, severity, fail_on, focus, prompt_file, no_cache
 
 
 @click.group(invoke_without_command=True)
@@ -128,7 +142,19 @@ def main(ctx: click.Context) -> None:
     "--count",
     type=int,
     default=1,
-    help="Number of commits to analyze (when using HEAD~n).",
+    help="Number of commits to analyze (when using HEAD~n). Not used with --from/--to.",
+)
+@click.option(
+    "--from",
+    "from_ref",
+    default=None,
+    help="Range start ref (use with --to). Analyzes commits in Git range from..to.",
+)
+@click.option(
+    "--to",
+    "to_ref",
+    default=None,
+    help="Range end ref (use with --from).",
 )
 @click.option(
     "--api-key",
@@ -179,11 +205,37 @@ def main(ctx: click.Context) -> None:
     default=None,
     help="Save output to a file (in addition to stdout).",
 )
+@click.option(
+    "--focus",
+    type=click.Choice(
+        ["general", "security", "performance", "bugs", "quality"],
+        case_sensitive=False,
+    ),
+    default="general",
+    show_default=True,
+    help="Scope the review toward security, performance, bugs, quality, or general.",
+)
+@click.option(
+    "--prompt-file",
+    "prompt_file",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    default=None,
+    help="Replace the system prompt with the contents of this UTF-8 text file.",
+)
+@click.option(
+    "--no-cache",
+    "no_cache",
+    is_flag=True,
+    default=False,
+    help="Do not read or write .commitguard_cache in the repository.",
+)
 def analyze(
     ctx: click.Context,
     commit: str,
     repo_path: Path,
     count: int,
+    from_ref: str | None,
+    to_ref: str | None,
     api_key: str | None,
     config_file: Path | None,
     model: str,
@@ -191,10 +243,22 @@ def analyze(
     severity: str,
     fail_on: str,
     output_file: Path | None,
+    focus: str,
+    prompt_file: Path | None,
+    no_cache: bool,
 ) -> None:
     """Analyze one or more commits for bugs and issues."""
     cfg, base_dir = load_resolved_config(config_file)
-    model, repo_path, output_format, severity, fail_on = apply_user_config(
+    (
+        model,
+        repo_path,
+        output_format,
+        severity,
+        fail_on,
+        focus,
+        prompt_file,
+        no_cache,
+    ) = apply_user_config(
         ctx,
         cfg,
         base_dir,
@@ -203,6 +267,9 @@ def analyze(
         output_format=output_format,
         severity=severity,
         fail_on=fail_on,
+        focus=focus,
+        prompt_file=prompt_file,
+        no_cache=no_cache,
     )
     repo = get_repo_path(str(repo_path))
     key = api_key or os.environ.get("OPENROUTER_API_KEY")
@@ -213,7 +280,39 @@ def analyze(
     if count < 1:
         raise click.ClickException("--count must be at least 1.")
 
-    refs = [commit] if count == 1 else [f"{commit}~{i}" for i in range(count - 1, -1, -1)]
+    range_mode = from_ref is not None and to_ref is not None
+    if (from_ref is None) ^ (to_ref is None):
+        raise click.ClickException(
+            "Specify both --from and --to for a commit range, or neither."
+        )
+    if range_mode and ctx.get_parameter_source("count") != ParameterSource.DEFAULT:
+        raise click.ClickException("Do not combine --count with --from/--to.")
+    if range_mode and ctx.get_parameter_source("commit") != ParameterSource.DEFAULT:
+        raise click.ClickException("Do not pass a COMMIT argument when using --from/--to.")
+
+    prompt_override: str | None = None
+    if prompt_file is not None:
+        try:
+            prompt_override = load_prompt_file(prompt_file)
+        except AnalysisError as e:
+            raise click.ClickException(str(e)) from e
+    use_cache = not no_cache
+
+    if range_mode:
+        try:
+            refs = list_commit_shas_in_range(str(repo), from_ref, to_ref)
+        except AnalysisError as e:
+            raise click.ClickException(str(e)) from e
+        if not refs:
+            raise click.ClickException(
+                f"No commits in range {from_ref!r}..{to_ref!r} (exclusive start, inclusive end of feature tip)."
+            )
+    else:
+        refs = (
+            [commit]
+            if count == 1
+            else [f"{commit}~{i}" for i in range(count - 1, -1, -1)]
+        )
     had_errors = False
     issues_found = False
     json_results: list[dict] = []
@@ -221,12 +320,28 @@ def analyze(
     for ref in refs:
         try:
             if output_format == "json":
-                result = analyze_commit_json(str(repo), ref, api_key=key, model=model)
+                result = analyze_commit_json(
+                    str(repo),
+                    ref,
+                    api_key=key,
+                    model=model,
+                    focus=focus,
+                    system_prompt_override=prompt_override,
+                    use_cache=use_cache,
+                )
                 json_results.append({"commit": ref, **result})
                 if result.get("findings"):
                     issues_found = True
             else:
-                result = analyze_commit(str(repo), ref, api_key=key, model=model)
+                result = analyze_commit(
+                    str(repo),
+                    ref,
+                    api_key=key,
+                    model=model,
+                    focus=focus,
+                    system_prompt_override=prompt_override,
+                    use_cache=use_cache,
+                )
                 click.echo()
                 click.secho(f"Commit: {ref}", fg="cyan", bold=True)
                 click.echo(result)
@@ -329,6 +444,30 @@ def analyze(
     default=None,
     help="Save output to a file (in addition to stdout).",
 )
+@click.option(
+    "--focus",
+    type=click.Choice(
+        ["general", "security", "performance", "bugs", "quality"],
+        case_sensitive=False,
+    ),
+    default="general",
+    show_default=True,
+    help="Scope the review toward security, performance, bugs, quality, or general.",
+)
+@click.option(
+    "--prompt-file",
+    "prompt_file",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    default=None,
+    help="Replace the system prompt with the contents of this UTF-8 text file.",
+)
+@click.option(
+    "--no-cache",
+    "no_cache",
+    is_flag=True,
+    default=False,
+    help="Do not read or write .commitguard_cache in the repository.",
+)
 def check(
     ctx: click.Context,
     repo_path: Path,
@@ -339,10 +478,22 @@ def check(
     severity: str,
     fail_on: str,
     output_file: Path | None,
+    focus: str,
+    prompt_file: Path | None,
+    no_cache: bool,
 ) -> None:
     """Analyze staged changes (before commit)."""
     cfg, base_dir = load_resolved_config(config_file)
-    model, repo_path, output_format, severity, fail_on = apply_user_config(
+    (
+        model,
+        repo_path,
+        output_format,
+        severity,
+        fail_on,
+        focus,
+        prompt_file,
+        no_cache,
+    ) = apply_user_config(
         ctx,
         cfg,
         base_dir,
@@ -351,6 +502,9 @@ def check(
         output_format=output_format,
         severity=severity,
         fail_on=fail_on,
+        focus=focus,
+        prompt_file=prompt_file,
+        no_cache=no_cache,
     )
     repo = get_repo_path(str(repo_path))
     key = api_key or os.environ.get("OPENROUTER_API_KEY")
@@ -359,10 +513,25 @@ def check(
             "OpenRouter API key required. Set OPENROUTER_API_KEY or use --api-key."
         )
 
+    prompt_override: str | None = None
+    if prompt_file is not None:
+        try:
+            prompt_override = load_prompt_file(prompt_file)
+        except AnalysisError as e:
+            raise click.ClickException(str(e)) from e
+    use_cache = not no_cache
+
     click.echo("Analyzing staged changes...")
     try:
         if output_format == "json":
-            result = analyze_staged_json(str(repo), api_key=key, model=model)
+            result = analyze_staged_json(
+                str(repo),
+                api_key=key,
+                model=model,
+                focus=focus,
+                system_prompt_override=prompt_override,
+                use_cache=use_cache,
+            )
             if "findings" in result:
                 result["findings"] = filter_findings_by_severity(
                     result["findings"], severity
@@ -391,7 +560,14 @@ def check(
                 raise click.ClickException("Issues found in staged changes.")
             return
 
-        result = analyze_staged(str(repo), api_key=key, model=model)
+        result = analyze_staged(
+            str(repo),
+            api_key=key,
+            model=model,
+            focus=focus,
+            system_prompt_override=prompt_override,
+            use_cache=use_cache,
+        )
         click.echo(result)
         if output_file:
             output_file.write_text(result, encoding="utf-8")

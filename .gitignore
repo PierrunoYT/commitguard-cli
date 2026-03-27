@@ -46,6 +46,9 @@ env/
 PUBLISHING.md
 tasks.md
 
+# CommitGuard cache (per-repo; also gitignored inside projects)
+.commitguard_cache/
+
 # Testing / coverage
 .pytest_cache/
 .coverage

@@ -19,7 +19,9 @@ from commitguard.analyzer import (
     analyze_commit_json,
     analyze_staged,
     analyze_staged_json,
+    build_effective_system_prompt,
     has_issues_in_text,
+    list_commit_shas_in_range,
 )
 from commitguard.errors import AnalysisError
 
@@ -362,18 +364,80 @@ def test_severity_levels():
     assert SEVERITY_LEVELS == {"critical", "warning", "info"}
 
 
+def test_build_effective_system_prompt_security():
+    sp = build_effective_system_prompt("security", None)
+    assert "security" in sp.lower() or "injection" in sp.lower()
+
+
+def test_build_effective_system_prompt_override():
+    sp = build_effective_system_prompt("general", "CUSTOM PROMPT ONLY")
+    assert sp.startswith("CUSTOM PROMPT ONLY")
+
+
+# ---------------------------------------------------------------------------
+# list_commit_shas_in_range (real git repo)
+# ---------------------------------------------------------------------------
+
+
+def test_list_commit_shas_in_range(tmp_path):
+    import subprocess
+
+    subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "config", "user.email", "t@t.com"],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "config", "user.name", "t"],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(["git", "branch", "-M", "main"], cwd=tmp_path, check=True, capture_output=True)
+    (tmp_path / "f.txt").write_text("a")
+    subprocess.run(["git", "add", "f.txt"], cwd=tmp_path, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "commit", "-m", "first"],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "checkout", "-b", "feature"],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+    )
+    (tmp_path / "f.txt").write_text("ab")
+    subprocess.run(["git", "add", "f.txt"], cwd=tmp_path, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "commit", "-m", "second"],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+    )
+
+    shas = list_commit_shas_in_range(str(tmp_path), "main", "feature")
+    assert len(shas) == 1
+
+
 # ---------------------------------------------------------------------------
 # analyze_commit / analyze_commit_json (integration-ish with mocked internals)
 # ---------------------------------------------------------------------------
 
 
+@patch("commitguard.analyzer.write_cached_text")
+@patch("commitguard.analyzer.read_cached_text", return_value=None)
 @patch("commitguard.analyzer._call_ai", return_value="No issues detected.")
 @patch("commitguard.analyzer.Repo")
-def test_analyze_commit(mock_repo_cls, mock_call):
+def test_analyze_commit(mock_repo_cls, mock_call, _rc, _wc):
     repo = MagicMock()
     mock_repo_cls.return_value = repo
 
     commit = MagicMock()
+    commit.hexsha = "abc123deadbeef"
     commit.parents = [MagicMock()]
     commit.message = "fix bug"
     diff_item = MagicMock()
@@ -389,13 +453,16 @@ def test_analyze_commit(mock_repo_cls, mock_call):
     mock_call.assert_called_once()
 
 
+@patch("commitguard.analyzer.write_cached_json")
+@patch("commitguard.analyzer.read_cached_json", return_value=None)
 @patch("commitguard.analyzer._call_ai_json", return_value={"summary": "ok", "findings": []})
 @patch("commitguard.analyzer.Repo")
-def test_analyze_commit_json(mock_repo_cls, mock_call):
+def test_analyze_commit_json(mock_repo_cls, mock_call, _rj, _wj):
     repo = MagicMock()
     mock_repo_cls.return_value = repo
 
     commit = MagicMock()
+    commit.hexsha = "abc123deadbeef"
     commit.parents = [MagicMock()]
     commit.message = "fix bug"
     commit.diff.return_value = []
@@ -407,14 +474,17 @@ def test_analyze_commit_json(mock_repo_cls, mock_call):
     assert result == {"summary": "ok", "findings": []}
 
 
+@patch("commitguard.analyzer.write_cached_text")
+@patch("commitguard.analyzer.read_cached_text", return_value=None)
 @patch("commitguard.analyzer._call_ai", return_value="No issues detected.")
 @patch("commitguard.analyzer.Repo")
-def test_analyze_commit_initial_commit(mock_repo_cls, mock_call):
+def test_analyze_commit_initial_commit(mock_repo_cls, mock_call, _rc, _wc):
     """Test path for commits with no parents (initial commit)."""
     repo = MagicMock()
     mock_repo_cls.return_value = repo
 
     commit = MagicMock()
+    commit.hexsha = "1111111111111111"
     commit.parents = []
     commit.message = b"initial"  # test bytes message path
     diff_item = MagicMock()
@@ -434,9 +504,11 @@ def test_analyze_commit_initial_commit(mock_repo_cls, mock_call):
 # ---------------------------------------------------------------------------
 
 
+@patch("commitguard.analyzer.write_cached_text")
+@patch("commitguard.analyzer.read_cached_text", return_value=None)
 @patch("commitguard.analyzer._call_ai", return_value="Looks fine")
 @patch("commitguard.analyzer.Repo")
-def test_analyze_staged(mock_repo_cls, mock_call):
+def test_analyze_staged(mock_repo_cls, mock_call, _rc, _wc):
     repo = MagicMock()
     mock_repo_cls.return_value = repo
     repo.git.diff.side_effect = lambda *a, **kw: (
@@ -475,9 +547,11 @@ def test_analyze_staged_json_no_changes(mock_repo_cls):
     assert result == {"summary": "No staged changes to analyze.", "findings": []}
 
 
+@patch("commitguard.analyzer.write_cached_json")
+@patch("commitguard.analyzer.read_cached_json", return_value=None)
 @patch("commitguard.analyzer._call_ai_json", return_value={"summary": "s", "findings": []})
 @patch("commitguard.analyzer.Repo")
-def test_analyze_staged_json_with_changes(mock_repo_cls, mock_call):
+def test_analyze_staged_json_with_changes(mock_repo_cls, mock_call, _rj, _wj):
     repo = MagicMock()
     mock_repo_cls.return_value = repo
     repo.git.diff.return_value = "some staged diff"

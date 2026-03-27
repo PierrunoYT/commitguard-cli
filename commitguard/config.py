@@ -7,7 +7,18 @@ import sys
 from pathlib import Path
 from typing import Any
 
-ALLOWED_KEYS = frozenset({"model", "repo", "format", "severity", "fail_on"})
+ALLOWED_KEYS = frozenset(
+    {
+        "model",
+        "repo",
+        "format",
+        "severity",
+        "fail_on",
+        "focus",
+        "prompt_file",
+        "no_cache",
+    }
+)
 
 
 def _load_toml_file(path: Path) -> dict[str, Any]:
@@ -88,16 +99,18 @@ def load_resolved_config(
     return discover_config_walk(walk_start)
 
 
+def resolve_path_from_config(path_str: str, base_dir: Path | None) -> Path:
+    """Resolve a path from config: relative paths are relative to *base_dir*."""
+    p = Path(path_str).expanduser()
+    if p.is_absolute():
+        return p.resolve()
+    root = base_dir if base_dir is not None else Path.cwd()
+    return (root / p).resolve()
+
+
 def resolve_repo_from_config(repo_str: str, base_dir: Path | None) -> Path:
     """Resolve ``repo`` from config: relative paths are relative to *base_dir* (config dir)."""
-    rp = Path(repo_str).expanduser()
-    if not rp.is_absolute():
-        if base_dir is None:
-            base_dir = Path.cwd()
-        rp = (base_dir / rp).resolve()
-    else:
-        rp = rp.resolve()
-    return rp
+    return resolve_path_from_config(repo_str, base_dir)
 
 
 def normalize_choice(

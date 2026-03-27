@@ -382,6 +382,64 @@ def test_check_error(mock_as, mock_update, runner, fake_repo):
 
 
 # ---------------------------------------------------------------------------
+# Commit range validation
+# ---------------------------------------------------------------------------
+
+
+def test_analyze_from_without_to(runner, fake_repo):
+    env = {**os.environ, "OPENROUTER_API_KEY": "test-key"}
+    result = runner.invoke(
+        main,
+        ["analyze", "--repo", str(fake_repo), "--from", "main"],
+        env=env,
+    )
+    assert result.exit_code != 0
+    assert "both --from and --to" in result.output.lower()
+
+
+def test_analyze_to_without_from(runner, fake_repo):
+    env = {**os.environ, "OPENROUTER_API_KEY": "test-key"}
+    result = runner.invoke(
+        main,
+        ["analyze", "--repo", str(fake_repo), "--to", "feature"],
+        env=env,
+    )
+    assert result.exit_code != 0
+    assert "both --from and --to" in result.output.lower()
+
+
+@patch("commitguard.cli.check_for_update", return_value=None)
+@patch(
+    "commitguard.cli.analyze_commit_json",
+    return_value={"summary": "ok", "findings": []},
+)
+@patch(
+    "commitguard.cli.list_commit_shas_in_range",
+    return_value=["1111111111111111111111111111111111111111"],
+)
+def test_analyze_range_mode(mock_range, mock_acj, mock_update, runner, fake_repo):
+    env = {**os.environ, "OPENROUTER_API_KEY": "test-key"}
+    result = runner.invoke(
+        main,
+        [
+            "analyze",
+            "--repo",
+            str(fake_repo),
+            "--from",
+            "main",
+            "--to",
+            "feature",
+            "--format",
+            "json",
+        ],
+        env=env,
+    )
+    assert result.exit_code == 0
+    assert mock_acj.call_count == 1
+    mock_range.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
 # Config file defaults
 # ---------------------------------------------------------------------------
 

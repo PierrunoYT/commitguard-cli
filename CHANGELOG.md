@@ -21,14 +21,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Output to file**:
   - Added `-o` / `--output` flag to save analysis results to a file (in addition to stdout)
 - **Configuration files**:
-  - Support `.commitguardrc` (TOML) and `[tool.commitguard]` in `pyproject.toml` for default `model`, `repo`, `format`, `severity`, and `fail-on`
+  - Support `.commitguardrc` (TOML) and `[tool.commitguard]` in `pyproject.toml` for defaults: `model`, `repo`, `format`, `severity`, `fail-on`, `focus`, `prompt_file`, and `no_cache`
   - Discovery walks upward from the working directory; optional `COMMITGUARD_CONFIG` env or `--config PATH` selects a file explicitly
   - CLI flags and environment variables override config when set (non-default)
+- **Analysis focus**: `--focus` (`general`, `security`, `performance`, `bugs`, `quality`) on `analyze` and `check`; configurable via `focus` in config files
+- **Custom system prompt**: `--prompt-file` and config key `prompt_file` (UTF-8 file replaces the default system prompt; focus hints are still appended unless `focus` is `general`)
+- **Commit ranges**: `analyze --from REF --to REF` using Git range `from..to` (commits reachable from `to` but not from `from`, oldest first)—for example `main..feature`
+- **Result cache**: Per-repository `.commitguard_cache/` stores text and JSON results keyed by commit SHA (or staged diff fingerprint), model, focus, and effective system prompt; use `--no-cache` or `no_cache = true` in config to bypass
+- **Python library API**: Public exports from `commitguard` (`analyze_commit`, `analyze_commit_json`, `analyze_staged`, `analyze_staged_json`, `build_effective_system_prompt`, `list_commit_shas_in_range`, `load_prompt_file`, `has_issues_in_text`, `SYSTEM_PROMPT`, `FOCUS_EXTRA`) with docstrings on analyzer entry points
 - **CI/CD examples**:
   - Added `examples/github-actions.yml`, `examples/gitlab-ci.yml`, and `examples/pre-commit-config.yaml` with README documentation
+- **Contributing**: [CONTRIBUTING.md](CONTRIBUTING.md) with dev setup and PR checklist
+- **GitHub templates**: Issue templates for bugs and features, and a pull request template under `.github/`
 - **Testing**:
-  - Added unit tests for `analyzer.py`, `cli.py`, and `config.py`
-  - Tests cover edge cases (root commits, truncated diffs, empty diffs), error handling (rate limits, timeouts, API errors), config discovery, and CLI flags
+  - Added unit tests for `analyzer.py`, `cli.py`, `config.py`, and `cache.py`
+  - Tests cover edge cases (root commits, truncated diffs, empty diffs), error handling (rate limits, timeouts, API errors), config discovery, CLI flags, commit ranges, and cache behavior
   - Added `pytest` configuration in `pyproject.toml`
 
 ### Changed
@@ -39,7 +46,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Changed the default model from `openai/gpt-4o-mini` to `anthropic/claude-sonnet-4.6` for both `analyze` and `check`
 - **Documentation**:
   - Updated README examples and option tables to reflect the new default model and model IDs
-  - Updated README with JSON usage examples, schema details, exit-code behavior, config file format, and CI/pre-commit integration
+  - Updated README with JSON usage examples, schema details, exit-code behavior, config file format, CI/pre-commit integration, focus and prompt options, commit ranges, cache behavior, and library usage
   - Added severity filtering and output-to-file documentation to README
 
 ### Fixed
