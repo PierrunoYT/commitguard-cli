@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.4] - 2026-03-27
+
+### Changed
+
+- **Model defaults**:
+  - Changed the default model from `openai/gpt-4o-mini` to `anthropic/claude-sonnet-4.6` for both `analyze` and `check`
+- **Documentation**:
+  - Updated README examples and option tables to reflect the new default model and model IDs
+
 ## [0.1.3] - 2026-03-27
 
 ### Changed

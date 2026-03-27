@@ -90,7 +90,7 @@ def analyze_commit(
     ref: str = "HEAD",
     *,
     api_key: str,
-    model: str = "openai/gpt-4o-mini",
+    model: str = "anthropic/claude-sonnet-4.6",
 ) -> str:
     """Analyze a specific commit."""
     repo = Repo(repo_path)
@@ -119,7 +119,7 @@ def analyze_staged(
     repo_path: str,
     *,
     api_key: str,
-    model: str = "openai/gpt-4o-mini",
+    model: str = "anthropic/claude-sonnet-4.6",
 ) -> str:
     """Analyze staged changes."""
     repo = Repo(repo_path)
